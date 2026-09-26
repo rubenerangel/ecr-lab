@@ -11,5 +11,5 @@ function shutdown(signal) {
   setTimeout(() => process.exit(1), 10_000).unref();
 }
 
-process.on('SIGTERM', shutdown);
-process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown); //TODO:preguntar como fuciona esto si es que lo envia docker
+process.on('SIGINT', shutdown); //TODO:preguntar como fuciona esto si es que lo envia docker

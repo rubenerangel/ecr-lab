@@ -1,18 +1,22 @@
-# 👈 NUEVO: archivo completo
 name: build-and-push-ecr
 
 on:
   push:
-    branches: [main]      # corre cuando llega un commit a main
-  workflow_dispatch:      # permite ejecutarlo a mano desde la pestaña Actions
+    branches: [main]
+  workflow_dispatch:
 
 permissions:
-  id-token: write         # permite al job pedir el token OIDC a GitHub
-  contents: read          # permite hacer checkout del código
+  id-token: write
+  contents: read
+
+concurrency:                          # 👈 NUEVO
+  group: ecr-${{ github.sha }}        # 👈 NUEVO: una sola ejecución a la vez por commit
+  cancel-in-progress: false           # 👈 NUEVO: la segunda espera, no cancela a la primera
 
 env:
   AWS_REGION: us-east-1
-  ECR_REPOSITORY: ecr-lab-api   # el nombre del repo ECR del paso 1
+  ECR_REPOSITORY: ecr-lab-api
+  IMAGE_TAG: ${{ github.sha }}        # 👈 CAMBIO: antes estaba solo en el step de push
 
 jobs:
   push:
@@ -24,17 +28,33 @@ jobs:
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v5
         with:
-          role-to-assume: ${{ vars.AWS_ROLE_ARN }}   # la variable del paso 3.2
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Login to ECR
         id: ecr
         uses: aws-actions/amazon-ecr-login@v2
 
+      - name: Check if tag already exists     # 👈 NUEVO: step completo
+        id: check
+        run: |
+          if OUTPUT=$(aws ecr describe-images \
+                --repository-name "$ECR_REPOSITORY" \
+                --image-ids imageTag="$IMAGE_TAG" 2>&1); then
+            echo "Tag $IMAGE_TAG ya existe, se omite build y push"
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          elif grep -q ImageNotFoundException <<< "$OUTPUT"; then
+            echo "Tag $IMAGE_TAG no existe, se construye"
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "$OUTPUT"
+            exit 1
+          fi
+
       - name: Build and push
+        if: steps.check.outputs.exists == 'false'   # 👈 NUEVO: solo si el tag no existe
         env:
-          REGISTRY: ${{ steps.ecr.outputs.registry }}   # <cuenta>.dkr.ecr.us-east-1.amazonaws.com
-          IMAGE_TAG: ${{ github.sha }}                  # SHA del commit
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
         run: |
           docker build -t "$REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" .
           docker push "$REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
